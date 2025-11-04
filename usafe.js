@@ -1,16 +1,15 @@
 // ==UserScript==
 // @name         USAFE
-// @description  Alloha + Collaps для встроенного плеера Lampa
-// @version      5.0
+// @description  Отдельный раздел USAFE (без "Онлайн")
+// @version      7.0
 // @author       Ты
 // ==/UserScript==
 
 (function () {
     'use strict';
 
-    // Ждём Lampa
     var init = function() {
-        if (!window.Lampa || !Lampa.Plugin || !Lampa.PlayerVideo) {
+        if (!window.Lampa || !Lampa.Plugin || !Lampa.Controller) {
             setTimeout(init, 100);
             return;
         }
@@ -24,56 +23,73 @@
     function register() {
         function USAFE() {
             this.name = 'usafe';
-            this.type = 'online';
+            this.type = 'menu';  // ← Отдельный пункт в меню
 
-            this.render = function(card, item) {
-                return new Promise(function(resolve) {
-                    var title = item.title_ru || item.title || '';
-                    var year = item.year || '';
+            // === Иконка и название в главном меню ===
+            this.menu = function() {
+                return {
+                    title: 'USAFE',
+                    icon: '🎬',
+                    view: 'grid'
+                };
+            };
 
-                    // Alloha (iframe)
-                    fetch(getBalancer() + '/alloha?title=' + encodeURIComponent(title) + '&year=' + year, {
-                        headers: { 'User-Agent': UA }
+            // === Загрузка списка фильмов (пример: популярные с TMDB) ===
+            this.render = function(view, params) {
+                Lampa.Loading.start();
+
+                fetch('https://api.themoviedb.org/3/movie/popular?api_key=4e0e4b6f2b3c8d2f8a1c7d9e6f5a4b3c&language=ru-RU')
+                    .then(r => r.json())
+                    .then(data => {
+                        var items = data.results.slice(0, 20).map(movie => {
+                            return {
+                                title: movie.title,
+                                title_original: movie.original_title,
+                                year: movie.release_date ? movie.release_date.split('-')[0] : '',
+                                poster: 'https://image.tmdb.org/t/p/w500' + movie.poster_path,
+                                onClick: () => this.playMovie(movie.title, movie.release_date ? movie.release_date.split('-')[0] : '')
+                            };
+                        });
+
+                        view.html(Lampa.Template.get('grid', { items: items }));
+                        Lampa.Loading.stop();
                     })
-                    .then(function(r) { return r.ok ? r.json() : null; })
-                    .then(function(d) {
-                        if (d && d.data && d.data[0] && d.data[0].iframe_url) {
-                            card.addSource({
-                                title: 'Alloha • HD',
-                                quality: '1080p',
-                                onplay: function() {
-                                    Lampa.PlayerVideo.play({
-                                        url: d.data[0].iframe_url,
-                                        type: 'iframe'
-                                    });
-                                }
-                            });
-                        }
-                    })
-                    .catch(function() {});
+                    .catch(() => {
+                        view.html('<div style="text-align:center;padding:50px;color:white;">Ошибка загрузки</div>');
+                        Lampa.Loading.stop();
+                    });
+            };
 
-                    // Collaps (iframe)
-                    fetch('https://collaps.cc/search?q=' + encodeURIComponent(title))
-                    .then(function(r) { return r.text(); })
-                    .then(function(h) {
-                        var m = h.match(/href="\/embed\/(\w+)"/);
-                        if (m) {
-                            card.addSource({
-                                title: 'Collaps • HD',
-                                quality: '1080p',
-                                onplay: function() {
-                                    Lampa.PlayerVideo.play({
-                                        url: 'https://collaps.cc/embed/' + m[1],
-                                        type: 'iframe'
-                                    });
-                                }
-                            });
-                        }
-                    })
-                    .catch(function() {});
-
-                    setTimeout(resolve, 300); // Дать время на добавление
+            // === Воспроизведение ===
+            this.playMovie = function(title, year) {
+                Lampa.Modal.open({
+                    title: 'USAFE • ' + title,
+                    html: '<div style="padding:20px;color:white;">Ищем источник...</div>',
+                    onClose: () => Lampa.Controller.toggle('content')
                 });
+
+                // Alloha
+                fetch(getBalancer() + '/alloha?title=' + encodeURIComponent(title) + '&year=' + year, { headers: { 'User-Agent': UA } })
+                    .then(r => r.ok ? r.json() : null)
+                    .then(d => {
+                        if (d && d.data && d.data[0] && d.data[0].iframe_url) {
+                            Lampa.PlayerVideo.play({ url: d.data[0].iframe_url, type: 'iframe' });
+                            Lampa.Modal.close();
+                        }
+                    });
+
+                // Collaps (резерв)
+                setTimeout(() => {
+                    fetch('https://collaps.cc/search?q=' + encodeURIComponent(title))
+                        .then(r => r.text())
+                        .then(h => {
+                            var m = h.match(/href="\/embed\/(\w+)"/);
+                            if (m) {
+                                Lampa.PlayerVideo.play({ url: 'https://collaps.cc/embed/' + m[1], type: 'iframe' });
+                                Lampa.Modal.close();
+                            }
+                        });
+                }, 1000);
             };
         }
 
